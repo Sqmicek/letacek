@@ -19,10 +19,13 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+
+from docs_page import DOCS_HTML
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "ceny.db")
 
-app = FastAPI(title="Porovnávač cen letáků - API")
+app = FastAPI(title="Porovnávač cen letáků - API", docs_url=None)
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,6 +33,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/docs", include_in_schema=False)
+async def custom_docs():
+    return HTMLResponse(DOCS_HTML)
 
 
 def get_conn():
