@@ -1,32 +1,11 @@
 """
 Vlastní HTML stránka pro /docs — nahrazuje výchozí Swagger UI.
 
-Vizuálně identická s nakup-porovnavac.tsx, ale ceny a produkty se ŽIVĚ
-natahují z reálného API tohoto serveru (/porovnat, /obchody) — tedy
-ze skutečných dat nascrapovaných z letáků pomocí scraper.py, ne z
-natvrdo zadaných ukázkových čísel.
-
-Vizuální metadata obchodů (barva, logo, odhad adresy/vzdálenosti) jsou
-v JS proměnné STORE_META — scraper tohle nesbírá, takže to zůstává
-natvrdo zadané a klidně si to uprav podle skutečné polohy svých prodejen.
-
-  - tmavý navy gradient header
-  - taby: 📝 Seznam · 📊 Ceny · ✅ Výsledek
-  - AI input s voláním Anthropic API (parsování seznamu, ne cen)
-  - rychlé přidání chipů
-  - bar-chart porovnání cen (živá data z /porovnat)
-  - optimalizované výsledky s trasou a úsporou (živá data)
-
-Použití ve FastAPI:
-    from docs_page import DOCS_HTML
-    from fastapi import FastAPI
-    from fastapi.responses import HTMLResponse
-
-    app = FastAPI(docs_url=None)
-
-    @app.get("/docs", include_in_schema=False)
-    async def custom_docs():
-        return HTMLResponse(DOCS_HTML)
+Opravy v této verzi:
+- fetchPorovnani() má timeout 20s + srozumitelná chybová zpráva
+- Chyba API je zobrazena přímo v záložce Ceny (ne jen v skrytém #ai-err)
+- loadFreshness() zobrazí konkrétní stav pro každý obchod vč. Kauflandu
+- Přidán info banner když databáze ještě neobsahuje žádná data
 """
 
 DOCS_HTML = r"""<!DOCTYPE html>
@@ -40,7 +19,6 @@ DOCS_HTML = r"""<!DOCTYPE html>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;}
 body{font-family:'Inter',system-ui,sans-serif;background:#f0f4f8;color:#1a1a2e;min-height:100vh;}
-
 .hdr{background:linear-gradient(135deg,#1a1a2e 0%,#16213e 60%,#0f3460 100%);padding:18px 16px 0;color:#fff;}
 .hdr-inner{max-width:500px;margin:0 auto;}
 .logo{display:flex;align-items:center;gap:10px;margin-bottom:4px;}
@@ -51,18 +29,16 @@ body{font-family:'Inter',system-ui,sans-serif;background:#f0f4f8;color:#1a1a2e;m
 .tabs{display:flex;margin-top:14px;gap:3px;}
 .tab{flex:1;padding:9px 2px;border:none;background:transparent;color:#94a3b8;font-weight:400;font-size:11px;border-radius:8px 8px 0 0;cursor:pointer;font-family:inherit;}
 .tab.active{background:#fff;color:#1a1a2e;font-weight:700;}
-
 .content{max-width:500px;margin:0 auto;padding:14px 14px 40px;}
-
 .card{background:#fff;border-radius:16px;padding:16px;margin-bottom:14px;box-shadow:0 2px 12px rgba(0,0,0,0.06);}
 .card-ai{border:2px solid #e0e7ff;background:linear-gradient(135deg,#fafbff,#f0f4ff);}
+.card-warn{border:2px solid #fde68a;background:#fffbeb;}
+.card-err{border:2px solid #fca5a5;background:#fff1f2;}
 .lbl{font-size:12px;font-weight:700;color:#64748b;margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px;}
-
 textarea{width:100%;padding:10px 12px;border-radius:10px;border:2px solid #e0e7ff;font-size:14px;resize:none;outline:none;font-family:inherit;}
 textarea:focus{border-color:#6366f1;}
 .ai-hint{font-size:12px;color:#6366f1;margin-bottom:10px;font-style:italic;}
 .ai-err{color:#ef4444;font-size:12px;margin-top:6px;}
-
 button{font-family:inherit;cursor:pointer;}
 .btn{border:none;border-radius:12px;font-weight:700;font-size:14px;padding:12px 20px;color:#fff;}
 .btn-ai{background:linear-gradient(135deg,#6366f1,#4f46e5);width:100%;font-size:15px;margin-top:10px;box-shadow:0 4px 16px rgba(99,102,241,0.3);}
@@ -71,20 +47,15 @@ button{font-family:inherit;cursor:pointer;}
 .btn-green:disabled{background:#94a3b8;box-shadow:none;cursor:not-allowed;}
 .btn-white{background:#fff;color:#374151;border:2px solid #e2e8f0;width:100%;font-size:15px;}
 .btn-navy{background:#1a1a2e;color:#fff;padding:10px 18px;border-radius:10px;font-size:13px;}
-
 .chips{display:flex;flex-wrap:wrap;gap:7px;}
 .chip{padding:6px 12px;border-radius:20px;border:2px solid #e2e8f0;background:#fff;color:#374151;font-size:13px;font-weight:600;cursor:pointer;}
 .chip.on{border-color:#22c55e;background:#f0fdf4;color:#16a34a;cursor:default;}
-
 .row{display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid #f1f5f9;}
 .row:last-child{border-bottom:none;}
 .qty-btn{width:28px;height:28px;border-radius:8px;border:2px solid #e2e8f0;background:#fff;font-weight:700;font-size:15px;}
 .rm-btn{color:#ef4444;background:none;border:none;font-size:18px;}
-
 .empty-state{text-align:center;padding:40px 0;color:#94a3b8;}
 .empty-icon{font-size:44px;margin-bottom:10px;}
-
-/* bar chart */
 .bar-row{display:flex;align-items:center;gap:8px;margin-bottom:7px;}
 .store-tag{width:62px;text-align:center;display:inline-block;padding:2px 7px;border-radius:20px;font-size:10px;font-weight:700;flex-shrink:0;}
 .store-tag.lg{min-width:72px;font-size:12px;padding:5px 12px;}
@@ -94,20 +65,16 @@ button{font-family:inherit;cursor:pointer;}
 .from-price{font-size:12px;color:#22c55e;font-weight:700;background:#f0fdf4;padding:2px 10px;border-radius:20px;}
 .prod-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;}
 .prod-name{font-weight:700;font-size:15px;text-transform:capitalize;}
-
-/* výsledky */
 .savings-box{background:linear-gradient(135deg,#065f46,#047857);border-radius:16px;padding:20px;color:#fff;text-align:center;margin-bottom:14px;}
 .savings-sub{font-size:12px;opacity:.8;margin-bottom:4px;}
 .savings-amt{font-size:44px;font-weight:900;letter-spacing:-2px;}
 .savings-info{font-size:13px;opacity:.8;margin-top:4px;}
-
 .route-row{display:flex;align-items:center;flex-wrap:wrap;gap:6px;}
 .route-pin{width:34px;height:34px;border-radius:50%;background:#f1f5f9;display:flex;align-items:center;justify-content:center;font-size:16px;}
 .route-store-ball{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.15);}
 .route-arrow{color:#cbd5e1;font-size:16px;}
 .route-name{font-size:11px;font-weight:700;}
 .route-dist{font-size:10px;color:#94a3b8;}
-
 .store-card{background:#fff;border-radius:16px;overflow:hidden;margin-bottom:14px;box-shadow:0 2px 12px rgba(0,0,0,0.06);}
 .store-hdr{padding:14px 16px;display:flex;justify-content:space-between;align-items:center;}
 .store-hdr-left{display:flex;align-items:center;gap:8px;}
@@ -123,10 +90,11 @@ button{font-family:inherit;cursor:pointer;}
 .item-desc{font-size:12px;color:#94a3b8;}
 .item-price{font-weight:700;font-size:15px;text-align:right;}
 .item-akce{font-size:10px;color:#dc2626;font-weight:700;}
+.db-banner{background:#fffbeb;border:2px solid #fde68a;border-radius:14px;padding:14px 16px;margin-bottom:14px;font-size:13px;color:#92400e;line-height:1.5;}
+.db-banner strong{display:block;font-size:14px;margin-bottom:4px;}
 </style>
 </head>
 <body>
-
 <div class="hdr">
   <div class="hdr-inner">
     <div class="logo">
@@ -152,23 +120,16 @@ button{font-family:inherit;cursor:pointer;}
 </div>
 
 <script>
-// ---- konfigurace ----
-// Vizuální metadata obchodů (barva/logo/odhad adresy a vzdálenosti).
-// Ceny a názvy produktů jdou ŽIVĚ z API (/porovnat, /obchody) — tohle jsou
-// jen kosmetické údaje, které scraper nesbírá. Pokud chceš přesnou adresu
-// a vzdálenost své konkrétní pobočky, uprav je tady.
 const STORE_META = {
   lidl:     {name:"Lidl",     color:"#FFD700", textColor:"#002f6c", logo:"🟡", vzdalenost:0.3,  adresa:"nejbližší pobočka"},
   kaufland: {name:"Kaufland", color:"#E30613", textColor:"#ffffff", logo:"🔴", vzdalenost:0.35, adresa:"nejbližší pobočka"},
   albert:   {name:"Albert",   color:"#004A99", textColor:"#ffffff", logo:"🔵", vzdalenost:0.8,  adresa:"nejbližší pobočka"},
 };
+
 function storeMeta(id){
   return STORE_META[id] || {name:id, color:"#94a3b8", textColor:"#ffffff", logo:"🏬", vzdalenost:9, adresa:""};
 }
 
-// Obecné hledané výrazy pro rychlé přidání a pro AI parsování.
-// Jde o LIKE-hledání v reálných názvech produktů z letáků (např. "mléko"
-// najde "Mléko Olma 1,5%" i "Mléko Kunín 1,5%" napříč obchody).
 const VSECHNY = ["mléko","rohlíky","máslo","jogurt","pivo","prací prášek","chleba","sýr",
   "jablka","banány","kuře","rajčata","brambory","vejce","rýže","těstoviny"];
 
@@ -176,21 +137,34 @@ let seznam = [];
 let vysledky = null;
 let aiLoading = false;
 let porovnaniLoading = false;
-let porovnaniCache = null;       // poslední odpověď z /porovnat, ať se nevolá API znovu zbytečně
+let porovnaniCache = null;
 let porovnaniCacheKey = null;
+let dbPrazdna = false;     // true pokud API vrátí prázdnou databázi
+let apiChyba = null;        // text poslední chyby API
 
-// ---- utils ----
 function esc(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 async function fetchPorovnani(terms){
   const key = terms.join(",");
   if(porovnaniCache && porovnaniCacheKey===key) return porovnaniCache;
-  const res = await fetch('/porovnat?produkty=' + encodeURIComponent(key));
-  if(!res.ok) throw new Error('API odpovědělo ' + res.status);
-  const data = await res.json();
-  porovnaniCache = data;
-  porovnaniCacheKey = key;
-  return data;
+
+  const controller = new AbortController();
+  const tid = setTimeout(() => controller.abort(), 20000);
+
+  try {
+    const res = await fetch('/porovnat?produkty=' + encodeURIComponent(key), {signal: controller.signal});
+    clearTimeout(tid);
+    if(!res.ok) throw new Error('API odpovědělo HTTP ' + res.status + '. Zkontroluj logy v Railway.');
+    const data = await res.json();
+    porovnaniCache = data;
+    porovnaniCacheKey = key;
+    apiChyba = null;
+    return data;
+  } catch(e) {
+    clearTimeout(tid);
+    if(e.name==='AbortError') throw new Error('API neodpovídá (timeout 20s). Zkontroluj, zda Railway service běží.');
+    throw e;
+  }
 }
 
 async function loadFreshness(){
@@ -200,10 +174,15 @@ async function loadFreshness(){
     const res = await fetch('/obchody');
     if(!res.ok) throw new Error('status ' + res.status);
     const data = await res.json();
+
     if(!data.length){
+      dbPrazdna = true;
       el.textContent = '⚠️ Databáze je prázdná — spusť scraper.py';
+      render();
       return;
     }
+
+    dbPrazdna = false;
     const parts = data.map(o=>{
       const meta = storeMeta(o.obchod);
       const dt = new Date(o.posledni_update);
@@ -211,7 +190,15 @@ async function loadFreshness(){
       const kdy = isNaN(dny) ? '?' : (dny<=0 ? 'dnes' : dny+'d zpět');
       return `${meta.name} ${kdy}`;
     });
-    el.textContent = '🕒 ' + parts.join(' · ');
+
+    // Upozornění pokud chybí Kaufland
+    const obchodyVDB = data.map(o=>o.obchod);
+    if(!obchodyVDB.includes('kaufland')){
+      el.textContent = '⚠️ Kaufland zatím chybí · ' + parts.join(' · ');
+    } else {
+      el.textContent = '🕒 ' + parts.join(' · ');
+    }
+    render();
   } catch(e){
     el.textContent = '⚠️ Nepodařilo se ověřit stav dat z API';
   }
@@ -242,7 +229,6 @@ function nejdrazsi(seznamItems, data){
   },0);
 }
 
-// ---- render ----
 function render(){
   renderSeznam();
   renderPorovnani();
@@ -261,11 +247,21 @@ function renderSeznam(){
   const el = document.getElementById('tab-seznam');
   let html = '';
 
+  // Banner prázdné DB
+  if(dbPrazdna){
+    html += `<div class="db-banner">
+      <strong>⚠️ Databáze zatím neobsahuje žádná data</strong>
+      Scraper ještě neproběhl. Spusť <code>python scraper.py</code> lokálně
+      nebo přes Railway → Run command, případně přes GitHub Actions (workflow_dispatch).
+      Ujisti se, že máš nastavenou proměnnou <code>OPENROUTER_API_KEY</code>.
+    </div>`;
+  }
+
   // AI card
   html += `<div class="card card-ai">
     <div class="lbl">✨ Napiš seznam přirozeně – AI to pochopí</div>
     <div class="ai-hint">Zkus: „kilo jablek, 2 mléka, prací prášek a nějaké to pivo"</div>
-    <textarea id="ai-input" rows="3" placeholder="Napiš sem svůj nákupní seznam..." oninput="document.getElementById('ai-err').textContent=''">${''}</textarea>
+    <textarea id="ai-input" rows="3" placeholder="Napiš sem svůj nákupní seznam..." oninput="document.getElementById('ai-err').textContent=''"></textarea>
     <div class="ai-err" id="ai-err"></div>
     <button class="btn btn-ai" id="ai-btn" onclick="parseAI()" ${aiLoading?'disabled':''}>
       ${aiLoading?'⏳ AI zpracovává...':'✨ Přidat pomocí AI'}
@@ -297,7 +293,6 @@ function renderSeznam(){
     html += `</div>`;
   }
 
-  // Akce
   if(seznam.length>0){
     html += `<button class="btn btn-green" id="porovnej-btn" onclick="porovnej()" ${porovnaniLoading?'disabled':''}>
       ${porovnaniLoading?'⏳ Hledám nejlepší ceny...':`🔍 Porovnat ${seznam.length} položek`}
@@ -315,14 +310,23 @@ async function renderPorovnani(){
     el.innerHTML=`<div class="empty-state"><div class="empty-icon">📊</div><div style="font-weight:600">Nejdřív přidej produkty do seznamu</div></div>`;
     return;
   }
-  el.innerHTML = `<div class="empty-state"><div class="empty-icon">⏳</div><div style="font-weight:600">Načítám aktuální ceny z API...</div></div>`;
 
+  el.innerHTML = `<div class="empty-state"><div class="empty-icon">⏳</div><div style="font-weight:600">Načítám aktuální ceny z API...</div></div>`;
   const terms = seznam.map(p=>p.nazev);
   let data;
   try{
     data = await fetchPorovnani(terms);
   } catch(e){
-    el.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div style="font-weight:600">Nepodařilo se načíst ceny z API</div></div>`;
+    el.innerHTML = `<div class="card card-err">
+      <div class="lbl">❌ Chyba načítání cen</div>
+      <div style="font-size:13px;color:#991b1b;line-height:1.6">${esc(e.message)}</div>
+      <div style="font-size:12px;color:#6b7280;margin-top:8px">
+        Co zkontrolovat:<br>
+        1. Je Railway service spuštěná? (produkce → <em>Settings → Status</em>)<br>
+        2. Proběhl scraper? Spusť <code>python scraper.py</code><br>
+        3. Je nastavena <code>OPENROUTER_API_KEY</code> v Railway env vars?
+      </div>
+    </div>`;
     return;
   }
 
@@ -334,7 +338,7 @@ async function renderPorovnani(){
         <div style="color:#94a3b8;font-size:13px">Nenalezeno v žádném aktuálním letáku</div></div>`;
       return;
     }
-    // nejlevnější nález pro každý obchod
+
     const byStore = {};
     matches.forEach(m=>{
       if(!byStore[m.obchod] || m.cena < byStore[m.obchod].cena) byStore[m.obchod] = m;
@@ -349,6 +353,7 @@ async function renderPorovnani(){
         <span class="prod-name">${esc(nazev)}</span>
         ${entries[0]?`<span class="from-price">od ${entries[0].item.cena.toFixed(2)} Kč</span>`:''}
       </div>`;
+
     entries.forEach(({obchod,item},i)=>{
       const meta = storeMeta(obchod);
       const color = i===0?'#22c55e':(i===entries.length-1?'#ef4444':'#94a3b8');
@@ -361,6 +366,7 @@ async function renderPorovnani(){
     });
     html += `</div>`;
   });
+
   el.innerHTML = html;
 }
 
@@ -370,27 +376,28 @@ function renderVysledky(){
     el.innerHTML=`<div class="empty-state"><div class="empty-icon">✅</div><div style="font-weight:600;margin-bottom:12px">Nejdřív porovnej ceny</div><button class="btn btn-navy" onclick="switchTab('seznam')">Zpět na seznam</button></div>`;
     return;
   }
+
   const optimum = vysledky.optimum;
   if(!optimum.length){
     el.innerHTML = `<div class="empty-state"><div class="empty-icon">😕</div><div style="font-weight:600;margin-bottom:12px">Žádný z produktů nebyl nalezen v aktuálních letácích</div><button class="btn btn-navy" onclick="switchTab('seznam')">Zpět na seznam</button></div>`;
     return;
   }
+
   const usetris = (vysledky.nejdrazsiCelkem-celkovaCena(optimum)).toFixed(2);
   let html='';
 
-  // Úspora
   html += `<div class="savings-box">
     <div class="savings-sub">Ušetříš oproti nákupu vše nejdráže</div>
     <div class="savings-amt">${parseFloat(usetris)>0?usetris+' Kč':'0 Kč'}</div>
     <div class="savings-info">Zaplatíš: <strong>${celkovaCena(optimum).toFixed(2)} Kč</strong> · ${optimum.length} ${optimum.length===1?'obchod':optimum.length<5?'obchody':'obchodů'}</div>
   </div>`;
 
-  // Trasa
   html += `<div class="card"><div class="lbl">🗺️ Doporučená trasa</div><div class="route-row">
     <div style="display:flex;align-items:center;gap:6px">
       <div class="route-pin">📍</div>
       <div style="font-size:11px;color:#94a3b8;font-weight:600">Vy</div>
     </div>`;
+
   optimum.forEach(([id,data])=>{
     html += `<div style="display:flex;align-items:center;gap:4px">
       <span class="route-arrow">→</span>
@@ -405,7 +412,6 @@ function renderVysledky(){
   });
   html += `</div></div>`;
 
-  // Obchody
   optimum.forEach(([id,data])=>{
     html += `<div class="store-card">
       <div class="store-hdr" style="background:${data.obchod.color};color:${data.obchod.textColor}">
@@ -422,6 +428,7 @@ function renderVysledky(){
         </div>
       </div>
       <div class="store-items">`;
+
     data.produkty.forEach(({produkt,nazev,cena,akce,jednotka,mnozstvi})=>{
       html += `<div class="item-row">
         <div>
@@ -471,9 +478,10 @@ async function porovnej(){
     vysledky = {optimum, nejdrazsiCelkem};
   } catch(e){
     porovnaniLoading=false;
+    apiChyba = e.message;
     renderSeznam();
-    const errEl = document.getElementById('ai-err');
-    if(errEl) errEl.textContent = 'Nepodařilo se načíst ceny z API. Zkus to znovu.';
+    // Přepni na záložku Ceny kde je vidět detailní chyba
+    switchTab('porovnani');
     return;
   }
   porovnaniLoading=false;

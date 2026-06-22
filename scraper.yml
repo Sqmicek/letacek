@@ -1,0 +1,50 @@
+name: Scraper letáků
+
+on:
+  schedule:
+    # Každou středu v 6:00 UTC (8:00 CEST) — Kaufland vydává nový leták každou středu
+    - cron: '0 6 * * 3'
+    # Také v neděli v 6:00 UTC pro Lidl/Albert (letáky platné od pondělí)
+    - cron: '0 6 * * 0'
+  workflow_dispatch:  # Umožní ruční spuštění přes GitHub UI
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout kódu
+        uses: actions/checkout@v4
+
+      - name: Nainstaluj Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Nainstaluj poppler-utils (pdftotext)
+        run: sudo apt-get install -y poppler-utils
+
+      - name: Nainstaluj Python závislosti
+        run: pip install -r requirements.txt
+
+      - name: Spusť scraper
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: python scraper.py
+
+      - name: Ulož ceny.db jako artefakt
+        uses: actions/upload-artifact@v4
+        with:
+          name: ceny-db
+          path: data/ceny.db
+          retention-days: 7
+
+      - name: Commitni aktualizovanou databázi do repa
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/ceny.db
+          git diff --staged --quiet || git commit -m "🛒 Aktualizace cen z letáků [$(date '+%d.%m.%Y')]"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
