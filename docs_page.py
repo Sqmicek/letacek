@@ -1,13 +1,21 @@
 """
 Vlastní HTML stránka pro /docs — nahrazuje výchozí Swagger UI.
 
-Vizuálně identická s nakup-porovnavac.tsx:
+Vizuálně identická s nakup-porovnavac.tsx, ale ceny a produkty se ŽIVĚ
+natahují z reálného API tohoto serveru (/porovnat, /obchody) — tedy
+ze skutečných dat nascrapovaných z letáků pomocí scraper.py, ne z
+natvrdo zadaných ukázkových čísel.
+
+Vizuální metadata obchodů (barva, logo, odhad adresy/vzdálenosti) jsou
+v JS proměnné STORE_META — scraper tohle nesbírá, takže to zůstává
+natvrdo zadané a klidně si to uprav podle skutečné polohy svých prodejen.
+
   - tmavý navy gradient header
   - taby: 📝 Seznam · 📊 Ceny · ✅ Výsledek
-  - AI input s voláním Anthropic API
+  - AI input s voláním Anthropic API (parsování seznamu, ne cen)
   - rychlé přidání chipů
-  - bar-chart porovnání cen
-  - optimalizované výsledky s trasou a úsporou
+  - bar-chart porovnání cen (živá data z /porovnat)
+  - optimalizované výsledky s trasou a úsporou (živá data)
 
 Použití ve FastAPI:
     from docs_page import DOCS_HTML
@@ -39,6 +47,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#f0f4f8;color:#1a1a2e;m
 .logo-icon{font-size:26px;}
 .logo-t{font-size:20px;font-weight:800;letter-spacing:-0.5px;}
 .logo-s{font-size:11px;color:#94a3b8;margin-top:-2px;}
+.logo-fresh{font-size:10px;color:#64748b;margin-top:3px;}
 .tabs{display:flex;margin-top:14px;gap:3px;}
 .tab{flex:1;padding:9px 2px;border:none;background:transparent;color:#94a3b8;font-weight:400;font-size:11px;border-radius:8px 8px 0 0;cursor:pointer;font-family:inherit;}
 .tab.active{background:#fff;color:#1a1a2e;font-weight:700;}
@@ -125,6 +134,7 @@ button{font-family:inherit;cursor:pointer;}
       <div>
         <div class="logo-t">NejlevnějšíNákup</div>
         <div class="logo-s">Porovnání cen z letáků · AI rozpoznávání</div>
+        <div class="logo-fresh" id="freshness">🕒 Načítám stav dat...</div>
       </div>
     </div>
     <div class="tabs">
@@ -142,130 +152,93 @@ button{font-family:inherit;cursor:pointer;}
 </div>
 
 <script>
-const LETAKY_DATA = {
-  lidl: {
-    name:"Lidl", color:"#FFD700", textColor:"#002f6c", logo:"🟡",
-    vzdalenost:0.3, adresa:"Dlouhá 12",
-    produkty:{
-      "mléko":{cena:19.90,jednotka:"1l",akce:true,nazev:"Mléko Olma 1,5%"},
-      "rohlíky":{cena:3.90,jednotka:"ks",akce:false,nazev:"Rohlík pšeničný"},
-      "máslo":{cena:49.90,jednotka:"250g",akce:false,nazev:"Máslo Madeta 82%"},
-      "jogurt":{cena:12.90,jednotka:"150g",akce:true,nazev:"Jogurt bílý Milbona"},
-      "pivo":{cena:13.90,jednotka:"0.5l",akce:true,nazev:"Pivo Braník 10°"},
-      "prací prášek":{cena:189.00,jednotka:"3kg",akce:true,nazev:"Prášek Persil Color"},
-      "chleba":{cena:32.90,jednotka:"500g",akce:false,nazev:"Chléb Šumavský"},
-      "sýr":{cena:39.90,jednotka:"100g",akce:false,nazev:"Eidam 45% plátky"},
-      "jablka":{cena:29.90,jednotka:"1kg",akce:true,nazev:"Jablka Gala 1kg"},
-      "banány":{cena:24.90,jednotka:"1kg",akce:false,nazev:"Banány Chiquita"},
-      "kuře":{cena:89.90,jednotka:"1kg",akce:true,nazev:"Kuřecí prsa chlaz."},
-      "rajčata":{cena:34.90,jednotka:"500g",akce:false,nazev:"Rajčata cherry"},
-      "brambory":{cena:19.90,jednotka:"2kg",akce:false,nazev:"Brambory varný typ A"},
-      "vejce":{cena:49.90,jednotka:"10ks",akce:false,nazev:"Vejce M volný chov"},
-      "rýže":{cena:29.90,jednotka:"1kg",akce:false,nazev:"Rýže jasmínová"},
-      "těstoviny":{cena:18.90,jednotka:"500g",akce:true,nazev:"Těstoviny penne"},
-    }
-  },
-  kaufland: {
-    name:"Kaufland", color:"#E30613", textColor:"#ffffff", logo:"🔴",
-    vzdalenost:0.35, adresa:"Dlouhá 8",
-    produkty:{
-      "mléko":{cena:22.90,jednotka:"1l",akce:false,nazev:"Mléko Kunín 1,5%"},
-      "rohlíky":{cena:2.90,jednotka:"ks",akce:true,nazev:"Rohlík zlatý"},
-      "máslo":{cena:44.90,jednotka:"250g",akce:true,nazev:"Máslo čerstvé 84%"},
-      "jogurt":{cena:15.90,jednotka:"150g",akce:false,nazev:"Jogurt K-Classic"},
-      "pivo":{cena:15.90,jednotka:"0.5l",akce:false,nazev:"Pivo Kozel 11°"},
-      "prací prášek":{cena:219.00,jednotka:"3kg",akce:false,nazev:"Prášek Ariel Color"},
-      "chleba":{cena:28.90,jednotka:"500g",akce:true,nazev:"Chléb kmínový"},
-      "sýr":{cena:42.90,jednotka:"100g",akce:false,nazev:"Gouda plátky"},
-      "jablka":{cena:32.90,jednotka:"1kg",akce:false,nazev:"Jablka Jonagold"},
-      "banány":{cena:21.90,jednotka:"1kg",akce:true,nazev:"Banány premium"},
-      "kuře":{cena:79.90,jednotka:"1kg",akce:false,nazev:"Kuřecí prsa chlaz."},
-      "rajčata":{cena:29.90,jednotka:"500g",akce:true,nazev:"Rajčata bio"},
-      "brambory":{cena:24.90,jednotka:"2kg",akce:false,nazev:"Brambory červené"},
-      "vejce":{cena:44.90,jednotka:"10ks",akce:true,nazev:"Vejce L volný chov"},
-      "rýže":{cena:34.90,jednotka:"1kg",akce:false,nazev:"Rýže basmati"},
-      "těstoviny":{cena:22.90,jednotka:"500g",akce:false,nazev:"Těstoviny farfalle"},
-    }
-  },
-  albert: {
-    name:"Albert", color:"#004A99", textColor:"#ffffff", logo:"🔵",
-    vzdalenost:0.8, adresa:"Náměstí 5",
-    produkty:{
-      "mléko":{cena:21.90,jednotka:"1l",akce:false,nazev:"Mléko Jihočeské 1,5%"},
-      "rohlíky":{cena:4.20,jednotka:"ks",akce:false,nazev:"Rohlík tukový"},
-      "máslo":{cena:42.90,jednotka:"250g",akce:false,nazev:"Máslo Jihočeské 82%"},
-      "jogurt":{cena:13.50,jednotka:"150g",akce:true,nazev:"Jogurt Activia"},
-      "pivo":{cena:16.90,jednotka:"0.5l",akce:false,nazev:"Pivo Pilsner 12°"},
-      "prací prášek":{cena:199.00,jednotka:"3kg",akce:true,nazev:"Prášek Ariel 3v1"},
-      "chleba":{cena:35.90,jednotka:"500g",akce:false,nazev:"Chléb celozrnný"},
-      "sýr":{cena:36.90,jednotka:"100g",akce:true,nazev:"Eidam 30% Bio"},
-      "jablka":{cena:27.90,jednotka:"1kg",akce:true,nazev:"Jablka Bio mix"},
-      "banány":{cena:26.90,jednotka:"1kg",akce:false,nazev:"Banány Fair Trade"},
-      "kuře":{cena:94.90,jednotka:"1kg",akce:false,nazev:"Kuřecí prsa bio"},
-      "rajčata":{cena:39.90,jednotka:"500g",akce:false,nazev:"Rajčata koktejlová"},
-      "brambory":{cena:22.90,jednotka:"2kg",akce:true,nazev:"Brambory nové"},
-      "vejce":{cena:52.90,jednotka:"10ks",akce:false,nazev:"Vejce XL bio"},
-      "rýže":{cena:27.90,jednotka:"1kg",akce:true,nazev:"Rýže dlouhozrnná"},
-      "těstoviny":{cena:24.90,jednotka:"500g",akce:false,nazev:"Těstoviny spaghetti"},
-    }
-  },
-  penny: {
-    name:"Penny", color:"#CC0000", textColor:"#ffffff", logo:"🟠",
-    vzdalenost:1.2, adresa:"Okružní 22",
-    produkty:{
-      "mléko":{cena:20.90,jednotka:"1l",akce:true,nazev:"Mléko Hollandia 1,5%"},
-      "rohlíky":{cena:3.50,jednotka:"ks",akce:false,nazev:"Rohlík klasický"},
-      "máslo":{cena:47.90,jednotka:"250g",akce:false,nazev:"Máslo President 82%"},
-      "jogurt":{cena:11.90,jednotka:"150g",akce:true,nazev:"Jogurt Florian"},
-      "pivo":{cena:12.90,jednotka:"0.5l",akce:true,nazev:"Pivo Gambrinus 10°"},
-      "prací prášek":{cena:179.00,jednotka:"3kg",akce:true,nazev:"Prášek Rex Color"},
-      "chleba":{cena:29.90,jednotka:"500g",akce:false,nazev:"Chléb světlý"},
-      "sýr":{cena:38.90,jednotka:"100g",akce:false,nazev:"Eidam 45% blok"},
-      "jablka":{cena:25.90,jednotka:"1kg",akce:false,nazev:"Jablka Golden"},
-      "banány":{cena:19.90,jednotka:"1kg",akce:true,nazev:"Banány 1kg"},
-      "kuře":{cena:84.90,jednotka:"1kg",akce:true,nazev:"Kuřecí stehna"},
-      "rajčata":{cena:31.90,jednotka:"500g",akce:false,nazev:"Rajčata salátová"},
-      "brambory":{cena:17.90,jednotka:"2kg",akce:true,nazev:"Brambory varné"},
-      "vejce":{cena:46.90,jednotka:"10ks",akce:false,nazev:"Vejce M klecová"},
-      "rýže":{cena:22.90,jednotka:"1kg",akce:false,nazev:"Rýže kulatá"},
-      "těstoviny":{cena:15.90,jednotka:"500g",akce:true,nazev:"Těstoviny fusilli"},
-    }
-  }
+// ---- konfigurace ----
+// Vizuální metadata obchodů (barva/logo/odhad adresy a vzdálenosti).
+// Ceny a názvy produktů jdou ŽIVĚ z API (/porovnat, /obchody) — tohle jsou
+// jen kosmetické údaje, které scraper nesbírá. Pokud chceš přesnou adresu
+// a vzdálenost své konkrétní pobočky, uprav je tady.
+const STORE_META = {
+  lidl:     {name:"Lidl",     color:"#FFD700", textColor:"#002f6c", logo:"🟡", vzdalenost:0.3,  adresa:"nejbližší pobočka"},
+  kaufland: {name:"Kaufland", color:"#E30613", textColor:"#ffffff", logo:"🔴", vzdalenost:0.35, adresa:"nejbližší pobočka"},
+  albert:   {name:"Albert",   color:"#004A99", textColor:"#ffffff", logo:"🔵", vzdalenost:0.8,  adresa:"nejbližší pobočka"},
 };
+function storeMeta(id){
+  return STORE_META[id] || {name:id, color:"#94a3b8", textColor:"#ffffff", logo:"🏬", vzdalenost:9, adresa:""};
+}
 
-const VSECHNY = Object.keys(LETAKY_DATA.lidl.produkty);
+// Obecné hledané výrazy pro rychlé přidání a pro AI parsování.
+// Jde o LIKE-hledání v reálných názvech produktů z letáků (např. "mléko"
+// najde "Mléko Olma 1,5%" i "Mléko Kunín 1,5%" napříč obchody).
+const VSECHNY = ["mléko","rohlíky","máslo","jogurt","pivo","prací prášek","chleba","sýr",
+  "jablka","banány","kuře","rajčata","brambory","vejce","rýže","těstoviny"];
+
 let seznam = [];
 let vysledky = null;
 let aiLoading = false;
 let porovnaniLoading = false;
+let porovnaniCache = null;       // poslední odpověď z /porovnat, ať se nevolá API znovu zbytečně
+let porovnaniCacheKey = null;
 
 // ---- utils ----
 function esc(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
-function optimalizuj(s){
-  const obchody = {};
-  s.forEach(({nazev, mnozstvi})=>{
-    let best=null, bestId=null;
-    Object.entries(LETAKY_DATA).forEach(([id,o])=>{
-      const it=o.produkty[nazev];
-      if(it&&(!best||it.cena<best.cena)){best=it;bestId=id;}
-    });
-    if(best&&bestId){
-      if(!obchody[bestId]) obchody[bestId]={obchod:LETAKY_DATA[bestId],produkty:[],celkem:0};
-      obchody[bestId].produkty.push({produkt:nazev,...best,mnozstvi});
-      obchody[bestId].celkem+=best.cena*mnozstvi;
+async function fetchPorovnani(terms){
+  const key = terms.join(",");
+  if(porovnaniCache && porovnaniCacheKey===key) return porovnaniCache;
+  const res = await fetch('/porovnat?produkty=' + encodeURIComponent(key));
+  if(!res.ok) throw new Error('API odpovědělo ' + res.status);
+  const data = await res.json();
+  porovnaniCache = data;
+  porovnaniCacheKey = key;
+  return data;
+}
+
+async function loadFreshness(){
+  const el = document.getElementById('freshness');
+  if(!el) return;
+  try{
+    const res = await fetch('/obchody');
+    if(!res.ok) throw new Error('status ' + res.status);
+    const data = await res.json();
+    if(!data.length){
+      el.textContent = '⚠️ Databáze je prázdná — spusť scraper.py';
+      return;
     }
+    const parts = data.map(o=>{
+      const meta = storeMeta(o.obchod);
+      const dt = new Date(o.posledni_update);
+      const dny = Math.floor((Date.now()-dt.getTime())/86400000);
+      const kdy = isNaN(dny) ? '?' : (dny<=0 ? 'dnes' : dny+'d zpět');
+      return `${meta.name} ${kdy}`;
+    });
+    el.textContent = '🕒 ' + parts.join(' · ');
+  } catch(e){
+    el.textContent = '⚠️ Nepodařilo se ověřit stav dat z API';
+  }
+}
+
+function optimalizuj(seznamItems, data){
+  const obchody = {};
+  seznamItems.forEach(({nazev,mnozstvi})=>{
+    const matches = data[nazev] || [];
+    if(!matches.length) return;
+    const best = matches.reduce((a,b)=> a.cena<b.cena ? a : b);
+    const id = best.obchod;
+    if(!obchody[id]) obchody[id] = {obchod: storeMeta(id), id, produkty:[], celkem:0};
+    obchody[id].produkty.push({produkt:nazev, nazev:best.nazev, cena:best.cena, akce:!!best.akce, jednotka:best.jednotka||'', mnozstvi});
+    obchody[id].celkem += best.cena*mnozstvi;
   });
   return Object.entries(obchody).sort(([,a],[,b])=>a.obchod.vzdalenost-b.obchod.vzdalenost);
 }
 
 function celkovaCena(opt){ return opt.reduce((s,[,d])=>s+d.celkem,0); }
 
-function nejdrazsi(s){
-  return s.reduce((sum,{nazev,mnozstvi})=>{
-    let mx=0;
-    Object.values(LETAKY_DATA).forEach(o=>{const it=o.produkty[nazev];if(it&&it.cena>mx)mx=it.cena;});
-    return sum+mx*mnozstvi;
+function nejdrazsi(seznamItems, data){
+  return seznamItems.reduce((sum,{nazev,mnozstvi})=>{
+    const matches = data[nazev]||[];
+    if(!matches.length) return sum;
+    const mx = matches.reduce((m,x)=>Math.max(m,x.cena),0);
+    return sum + mx*mnozstvi;
   },0);
 }
 
@@ -336,30 +309,52 @@ function renderSeznam(){
   el.innerHTML = html;
 }
 
-function renderPorovnani(){
+async function renderPorovnani(){
   const el = document.getElementById('tab-porovnani');
   if(seznam.length===0){
     el.innerHTML=`<div class="empty-state"><div class="empty-icon">📊</div><div style="font-weight:600">Nejdřív přidej produkty do seznamu</div></div>`;
     return;
   }
+  el.innerHTML = `<div class="empty-state"><div class="empty-icon">⏳</div><div style="font-weight:600">Načítám aktuální ceny z API...</div></div>`;
+
+  const terms = seznam.map(p=>p.nazev);
+  let data;
+  try{
+    data = await fetchPorovnani(terms);
+  } catch(e){
+    el.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div style="font-weight:600">Nepodařilo se načíst ceny z API</div></div>`;
+    return;
+  }
+
   let html='';
-  seznam.forEach(({nazev})=>{
-    const entries = Object.entries(LETAKY_DATA)
-      .map(([id,o])=>({id,o,item:o.produkty[nazev]}))
-      .filter(x=>x.item)
+  terms.forEach(nazev=>{
+    const matches = data[nazev] || [];
+    if(!matches.length){
+      html += `<div class="card"><div class="prod-head"><span class="prod-name">${esc(nazev)}</span></div>
+        <div style="color:#94a3b8;font-size:13px">Nenalezeno v žádném aktuálním letáku</div></div>`;
+      return;
+    }
+    // nejlevnější nález pro každý obchod
+    const byStore = {};
+    matches.forEach(m=>{
+      if(!byStore[m.obchod] || m.cena < byStore[m.obchod].cena) byStore[m.obchod] = m;
+    });
+    const entries = Object.entries(byStore)
+      .map(([obchod,item])=>({obchod,item}))
       .sort((a,b)=>a.item.cena-b.item.cena);
-    if(!entries.length) return;
     const max = entries[entries.length-1].item.cena;
+
     html += `<div class="card">
       <div class="prod-head">
         <span class="prod-name">${esc(nazev)}</span>
         ${entries[0]?`<span class="from-price">od ${entries[0].item.cena.toFixed(2)} Kč</span>`:''}
       </div>`;
-    entries.forEach(({id,o,item},i)=>{
+    entries.forEach(({obchod,item},i)=>{
+      const meta = storeMeta(obchod);
       const color = i===0?'#22c55e':(i===entries.length-1?'#ef4444':'#94a3b8');
       const w = Math.max((item.cena/max)*100,18);
       html += `<div class="bar-row">
-        <span class="store-tag" style="background:${o.color};color:${o.textColor}">${esc(o.name)}</span>
+        <span class="store-tag" style="background:${meta.color};color:${meta.textColor}">${esc(meta.name)}</span>
         <div class="bar-track"><div class="bar-fill" style="width:${w}%;background:${color}">${item.cena.toFixed(2)}</div></div>
         ${item.akce?'<span class="akce">AKCE</span>':''}
       </div>`;
@@ -375,8 +370,12 @@ function renderVysledky(){
     el.innerHTML=`<div class="empty-state"><div class="empty-icon">✅</div><div style="font-weight:600;margin-bottom:12px">Nejdřív porovnej ceny</div><button class="btn btn-navy" onclick="switchTab('seznam')">Zpět na seznam</button></div>`;
     return;
   }
-  const optimum = vysledky;
-  const usetris = (nejdrazsi(seznam)-celkovaCena(optimum)).toFixed(2);
+  const optimum = vysledky.optimum;
+  if(!optimum.length){
+    el.innerHTML = `<div class="empty-state"><div class="empty-icon">😕</div><div style="font-weight:600;margin-bottom:12px">Žádný z produktů nebyl nalezen v aktuálních letácích</div><button class="btn btn-navy" onclick="switchTab('seznam')">Zpět na seznam</button></div>`;
+    return;
+  }
+  const usetris = (vysledky.nejdrazsiCelkem-celkovaCena(optimum)).toFixed(2);
   let html='';
 
   // Úspora
@@ -460,14 +459,25 @@ function novyNakup(){
   seznam=[]; vysledky=null;
   switchTab('seznam');
 }
-function porovnej(){
+
+async function porovnej(){
   porovnaniLoading=true;
   renderSeznam();
-  setTimeout(()=>{
-    vysledky=optimalizuj(seznam);
+  const terms = seznam.map(p=>p.nazev);
+  try{
+    const data = await fetchPorovnani(terms);
+    const optimum = optimalizuj(seznam, data);
+    const nejdrazsiCelkem = nejdrazsi(seznam, data);
+    vysledky = {optimum, nejdrazsiCelkem};
+  } catch(e){
     porovnaniLoading=false;
-    switchTab('vysledky');
-  },700);
+    renderSeznam();
+    const errEl = document.getElementById('ai-err');
+    if(errEl) errEl.textContent = 'Nepodařilo se načíst ceny z API. Zkus to znovu.';
+    return;
+  }
+  porovnaniLoading=false;
+  switchTab('vysledky');
 }
 
 async function parseAI(){
@@ -517,6 +527,7 @@ Pokud není uvedeno množství, použij 1.`;
 
 // init
 render();
+loadFreshness();
 </script>
 </body>
 </html>
